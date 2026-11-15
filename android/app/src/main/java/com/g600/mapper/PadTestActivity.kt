@@ -53,7 +53,9 @@ class PadTestActivity : AppCompatActivity() {
         })
         root.addView(TextView(this).apply {
             text = "按手柄上的键，下面会显示 keyCode 和它来自哪个设备。\n" +
-                    "记下每个键的数字，映射不对时用「③ 显示键位」里单击圆点重新绑定。"
+                    "记下每个键的数字，映射不对时用「③ 显示键位」里单击圆点重新绑定。\n" +
+                    "摇杆轴：无障碍服务开着时，摇杆数据会被服务接管，本页可能读不到；" +
+                    "请看主界面「摇杆：…」那一行。"
             textSize = 12f
             setTextColor(Color.parseColor("#999999"))
             setPadding(0, dp(8f), 0, dp(10f))

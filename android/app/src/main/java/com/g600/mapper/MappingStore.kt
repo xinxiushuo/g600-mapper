@@ -5,7 +5,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * 一个映射点：手柄按键 -> 屏幕上的一个坐标。
+ * 一个映射点。两种形态：
+ *
+ *  · 按键点（kind = KIND_KEY）—— 手柄某个键 → 屏幕上的一个坐标，按下就点一下。
+ *  · 摇杆点（kind = KIND_STICK）—— 一个圆形区域，物理摇杆推多远，
+ *    就往那个方向"按/滑"多远，用来驱动游戏里的移动摇杆和视角。
+ *
  * 坐标用 0..1 的归一化值保存，换手机/换分辨率/横竖屏都能还原。
  */
 data class MappingPoint(
@@ -17,24 +22,60 @@ data class MappingPoint(
      * false（默认）= 单击：按下时点一次就结束。点桌面图标、点技能按钮都用这个。
      * true        = 连发：按住时每 120ms 重复点击，用于游戏里需要持续按住的操作
      *               （非 root 下做不到真正的长按，只能高频连点来近似）。
+     * 摇杆点用不到这个字段。
      */
-    var repeat: Boolean = false
+    var repeat: Boolean = false,
+    /** KIND_KEY / KIND_STICK */
+    var kind: Int = KIND_KEY,
+    /** 摇杆的输入来源：SRC_MOVE（左摇杆+方向键）/ SRC_LOOK（右摇杆） */
+    var src: Int = SRC_MOVE,
+    /** 摇杆半径，占屏幕短边的比例 */
+    var radius: Float = 0.16f
 ) {
+    val isStick: Boolean get() = kind == KIND_STICK
+    val isLook: Boolean get() = kind == KIND_STICK && src == SRC_LOOK
+
     fun toJson(): JSONObject = JSONObject().apply {
         put("code", keyCode)
         put("label", label)
         put("fx", fx.toDouble())
         put("fy", fy.toDouble())
         put("repeat", repeat)
+        put("kind", kind)
+        put("src", src)
+        put("radius", radius.toDouble())
     }
 
     companion object {
+        const val KIND_KEY = 0
+        const val KIND_STICK = 1
+
+        /** 移动：左摇杆优先，没有摇杆数据时自动用十字键 */
+        const val SRC_MOVE = 0
+
+        /** 视角：右摇杆 */
+        const val SRC_LOOK = 1
+
         fun fromJson(o: JSONObject) = MappingPoint(
             o.optInt("code"),
             o.optString("label"),
             o.optDouble("fx", 0.5).toFloat(),
             o.optDouble("fy", 0.5).toFloat(),
-            o.optBoolean("repeat", false)
+            o.optBoolean("repeat", false),
+            o.optInt("kind", KIND_KEY),
+            o.optInt("src", SRC_MOVE),
+            o.optDouble("radius", 0.16).toFloat()
+        )
+
+        fun stick(src: Int, fx: Float, fy: Float, radius: Float) = MappingPoint(
+            keyCode = 0,
+            label = if (src == SRC_LOOK) "视" else "移",
+            fx = fx,
+            fy = fy,
+            repeat = false,
+            kind = KIND_STICK,
+            src = src,
+            radius = radius
         )
     }
 }
@@ -42,19 +83,32 @@ data class MappingPoint(
 object MappingStore {
     private const val PREF = "g600_map"
     private const val KEY = "points"
+    private const val KEY_VER = "layoutVer"
+
+    /** 1 = 只有按键；2 = 加了方向键 + 双摇杆。旧存档会自动补齐，不动用户已经摆好的位置 */
+    private const val VER = 2
 
     fun load(ctx: Context): MutableList<MappingPoint> {
         val sp = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         val raw = sp.getString(KEY, null)
-        if (raw.isNullOrBlank()) return seedDefault()
-        return try {
-            val arr = JSONArray(raw)
-            val list = mutableListOf<MappingPoint>()
-            for (i in 0 until arr.length()) list.add(MappingPoint.fromJson(arr.getJSONObject(i)))
-            if (list.isEmpty()) seedDefault() else list
-        } catch (e: Exception) {
+        val list = if (raw.isNullOrBlank()) {
             seedDefault()
+        } else {
+            try {
+                val arr = JSONArray(raw)
+                val l = mutableListOf<MappingPoint>()
+                for (i in 0 until arr.length()) l.add(MappingPoint.fromJson(arr.getJSONObject(i)))
+                if (l.isEmpty()) seedDefault() else l
+            } catch (e: Exception) {
+                seedDefault()
+            }
         }
+        if (sp.getInt(KEY_VER, 1) < VER) {
+            ensureNewDefaults(list)
+            save(ctx, list)
+            sp.edit().putInt(KEY_VER, VER).apply()
+        }
+        return list
     }
 
     fun save(ctx: Context, list: List<MappingPoint>) {
@@ -65,8 +119,32 @@ object MappingStore {
     }
 
     fun reset(ctx: Context) {
-        ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().remove(KEY).apply()
+        ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit().remove(KEY).remove(KEY_VER).apply()
     }
+
+    /**
+     * 老版本存档升级：
+     *  · 补两个摇杆圆环（老版本完全没有摇杆概念）
+     *  · 方向键**不**自动加圆点：默认让十字键去驱动"移动摇杆"更实用，
+     *    想把它当独立按键的人可以在主界面点「添加方向键圆点」。
+     */
+    private fun ensureNewDefaults(list: MutableList<MappingPoint>) {
+        if (list.none { it.isStick && it.src == MappingPoint.SRC_MOVE }) {
+            list.add(MappingPoint.stick(MappingPoint.SRC_MOVE, 0.17f, 0.80f, 0.15f))
+        }
+        if (list.none { it.isStick && it.src == MappingPoint.SRC_LOOK }) {
+            list.add(MappingPoint.stick(MappingPoint.SRC_LOOK, 0.85f, 0.50f, 0.18f))
+        }
+    }
+
+    /** 四个方向键圆点：只有当用户明确要"把方向键当按钮"时才加 */
+    fun dpadDefaults(): List<MappingPoint> = listOf(
+        MappingPoint(KeyEventCodes.DPAD_UP, "↑", 0.30f, 0.30f),
+        MappingPoint(KeyEventCodes.DPAD_LEFT, "←", 0.22f, 0.38f),
+        MappingPoint(KeyEventCodes.DPAD_RIGHT, "→", 0.38f, 0.38f),
+        MappingPoint(KeyEventCodes.DPAD_DOWN, "↓", 0.30f, 0.46f)
+    )
 
     /**
      * 首次运行的初始布局：按手机双摇杆游戏常见的右手键位排布，
@@ -89,9 +167,12 @@ object MappingStore {
             Triple(KeyEventCodes.BUTTON_START, "START", 0.50f to 0.88f),
             Triple(KeyEventCodes.HELP, "!", 0.50f to 0.12f)
         )
-        return seed.mapTo(mutableListOf()) { (code, label, pos) ->
+        val list = seed.mapTo(mutableListOf()) { (code, label, pos) ->
             MappingPoint(code, label, pos.first, pos.second)
         }
+        list.add(MappingPoint.stick(MappingPoint.SRC_MOVE, 0.17f, 0.80f, 0.15f))
+        list.add(MappingPoint.stick(MappingPoint.SRC_LOOK, 0.85f, 0.50f, 0.18f))
+        return list
     }
 }
 
@@ -109,4 +190,8 @@ private object KeyEventCodes {
     const val BUTTON_THUMBR = android.view.KeyEvent.KEYCODE_BUTTON_THUMBR
     const val BUTTON_START = android.view.KeyEvent.KEYCODE_BUTTON_START
     const val HELP = android.view.KeyEvent.KEYCODE_HELP
+    const val DPAD_UP = android.view.KeyEvent.KEYCODE_DPAD_UP
+    const val DPAD_DOWN = android.view.KeyEvent.KEYCODE_DPAD_DOWN
+    const val DPAD_LEFT = android.view.KeyEvent.KEYCODE_DPAD_LEFT
+    const val DPAD_RIGHT = android.view.KeyEvent.KEYCODE_DPAD_RIGHT
 }
