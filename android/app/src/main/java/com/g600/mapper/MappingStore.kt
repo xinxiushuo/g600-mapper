@@ -12,13 +12,20 @@ data class MappingPoint(
     var keyCode: Int,
     var label: String,
     var fx: Float = 0.5f,
-    var fy: Float = 0.5f
+    var fy: Float = 0.5f,
+    /**
+     * false（默认）= 单击：按下时点一次就结束。点桌面图标、点技能按钮都用这个。
+     * true        = 连发：按住时每 120ms 重复点击，用于游戏里需要持续按住的操作
+     *               （非 root 下做不到真正的长按，只能高频连点来近似）。
+     */
+    var repeat: Boolean = false
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("code", keyCode)
         put("label", label)
         put("fx", fx.toDouble())
         put("fy", fy.toDouble())
+        put("repeat", repeat)
     }
 
     companion object {
@@ -26,7 +33,8 @@ data class MappingPoint(
             o.optInt("code"),
             o.optString("label"),
             o.optDouble("fx", 0.5).toFloat(),
-            o.optDouble("fy", 0.5).toFloat()
+            o.optDouble("fy", 0.5).toFloat(),
+            o.optBoolean("repeat", false)
         )
     }
 }

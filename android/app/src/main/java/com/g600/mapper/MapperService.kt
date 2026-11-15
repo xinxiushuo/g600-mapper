@@ -8,6 +8,7 @@ import android.os.Looper
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
+import android.widget.Toast
 
 /**
  * 核心服务：
@@ -24,11 +25,23 @@ class MapperService : AccessibilityService() {
         @Volatile
         var instance: MapperService? = null
             private set
+
+        /** 单次点击时长(ms)。必须小于连发间隔，否则新手势会掐掉还没完成的手势 */
+        private const val TAP_MS = 45L
+
+        /** 连发间隔(ms)。120ms ≈ 每秒 8 次，够游戏侧识别成"按住" */
+        private const val REPEAT_GAP_MS = 120L
     }
 
     private lateinit var overlay: OverlayManager
     private val handler = Handler(Looper.getMainLooper())
+
+    /** 当前按住的所有键 */
     private val pressed = mutableSetOf<Int>()
+
+    /** 其中开了「连发」的键，需要按间隔重发 */
+    private val holding = mutableSetOf<Int>()
+
     private var ticking = false
 
     /** 总开关：关掉后按键全部放行。默认关，服务开启本身不干扰使用 */
@@ -43,6 +56,7 @@ class MapperService : AccessibilityService() {
         instance = this
         overlay = OverlayManager(this)
         overlay.onChipTap = { p -> startLearn(p) }
+        overlay.onChipLongPress = { p -> toggleRepeat(p) }
         overlay.onStop = { stopAll() }
         overlay.onLayoutChanged = { MappingStore.save(this, overlay.currentPoints()) }
         // 注意：这里**不自动显示浮窗**。旧版一连上就铺满屏幕，
@@ -91,11 +105,22 @@ class MapperService : AccessibilityService() {
             KeyEvent.ACTION_DOWN -> {
                 if (pressed.add(code)) {
                     overlay.highlight(point.keyCode, true)
-                    ensureTicking()
+                    // 按下瞬间先点一次：单击模式的全部动作就在这一次
+                    // 多指一起发，避免后发的 dispatch 取消前一个（组合键场景）
+                    val keys = mutableSetOf(code)
+                    keys.addAll(holding)
+                    tapKeys(keys)
+                    if (point.repeat) {
+                        holding.add(code)
+                        ensureTicking()
+                    }
                 }
             }
             KeyEvent.ACTION_UP -> {
-                if (pressed.remove(code)) overlay.highlight(point.keyCode, false)
+                if (pressed.remove(code)) {
+                    holding.remove(code)
+                    overlay.highlight(point.keyCode, false)
+                }
             }
         }
         return true   // 吞掉，避免游戏和映射同时响应
@@ -103,12 +128,12 @@ class MapperService : AccessibilityService() {
 
     private val tick = object : Runnable {
         override fun run() {
-            if (pressed.isEmpty()) {
+            if (holding.isEmpty()) {
                 ticking = false
                 return
             }
-            injectAll()
-            handler.postDelayed(this, 40)
+            tapKeys(holding.toList())
+            handler.postDelayed(this, REPEAT_GAP_MS)
         }
     }
 
@@ -119,22 +144,72 @@ class MapperService : AccessibilityService() {
         }
     }
 
-    private fun injectAll() {
-        val pxs = mutableListOf<Pair<Float, Float>>()
-        for (code in pressed) {
+    /**
+     * 在若干映射点上同时注入一次「点击」。
+     *
+     * 旧版就是在这里出的问题，两个坑都踩了：
+     *  1. 路径只有 moveTo、没有 lineTo —— 零长度路径在部分机型上不算有效点击
+     *  2. 每 40ms 发一次、每次时长 50ms —— dispatchGesture 会用新手势取消旧手势，
+     *     于是每个手势都在完成前被掐掉，等于一次都没点成（界面有高亮、屏幕无动作）
+     *
+     * 现在：时长 45ms < 间隔 120ms，每个手势都能完整走完；单击模式只发一次。
+     */
+    private fun tapKeys(codes: Collection<Int>) {
+        if (codes.isEmpty()) return
+        val pts = mutableListOf<Pair<Float, Float>>()
+        for (code in codes) {
             val p = overlay.findPoint(code) ?: continue
             val xy = overlay.pixelOf(p) ?: continue
-            pxs.add(xy)
+            pts.add(xy)
         }
-        if (pxs.isEmpty()) return
+        if (pts.isEmpty()) return
         val builder = GestureDescription.Builder()
-        pxs.forEach { (x, y) ->
-            val path = Path().apply { moveTo(x, y) }
-            builder.addStroke(GestureDescription.StrokeDescription(path, 0, 50))
+        pts.forEach { (x, y) ->
+            val path = Path().apply {
+                moveTo(x, y)
+                // 亚像素位移：远小于触摸阈值(~8dp)，不会被判成滑动，但能让路径非零长度
+                lineTo(x + 0.5f, y + 0.5f)
+            }
+            builder.addStroke(GestureDescription.StrokeDescription(path, 0, TAP_MS))
         }
         try {
             dispatchGesture(builder.build(), null, null)
         } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * 诊断用：在屏幕中心点一下，直接验证注入通不通。
+     * 返回结果通过回调给出，省得用户猜"到底是我没配好还是注入没生效"。
+     */
+    fun testTap(onResult: (Boolean, String) -> Unit) {
+        if (!::overlay.isInitialized) {
+            onResult(false, "服务还没初始化")
+            return
+        }
+        val (cx, cy) = overlay.screenCenter()
+        val path = Path().apply {
+            moveTo(cx, cy)
+            lineTo(cx + 0.5f, cy + 0.5f)
+        }
+        val g = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, TAP_MS))
+            .build()
+        val accepted = try {
+            dispatchGesture(g, object : AccessibilityService.GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    onResult(true, "已注入点击（坐标 ${cx.toInt()},${cy.toInt()}）")
+                }
+
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    onResult(false, "手势被系统取消 —— 可能被别的无障碍手势占用")
+                }
+            }, null)
+        } catch (e: Exception) {
+            false
+        }
+        if (!accepted) {
+            onResult(false, "dispatchGesture 返回 false：服务没有手势权限（canPerformGestures 未生效）")
         }
     }
 
@@ -144,6 +219,25 @@ class MapperService : AccessibilityService() {
         if (!overlay.isEditing) return
         pending = p
         overlay.showAwaiting(p)
+    }
+
+    /** 长按圆点：在「单击一次」和「按住连发」之间切换 */
+    private fun toggleRepeat(p: MappingPoint) {
+        p.repeat = !p.repeat
+        MappingStore.save(this, overlay.currentPoints())
+        toast(
+            if (p.repeat) "${p.label}：连发（按住时每 120ms 点一次）"
+            else "${p.label}：单击（按一次点一次）"
+        )
+    }
+
+    private fun toast(msg: String) {
+        handler.post {
+            try {
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+            } catch (_: Exception) {
+            }
+        }
     }
 
     fun showOverlay(edit: Boolean) {

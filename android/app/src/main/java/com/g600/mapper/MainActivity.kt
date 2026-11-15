@@ -12,6 +12,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
@@ -43,6 +44,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(btn("③ 显示键位并编辑") { startEdit() })
         root.addView(btn("④ 锁定并开始映射") { lockAndMap() })
         root.addView(btn("⑤ 停止并清除浮窗（随时可点）") { stopAll() })
+        root.addView(btn("测试点击（屏幕中心点一下）") { testTap() })
         root.addView(btn("手柄输入测试") { startTest() })
         root.addView(btn("恢复默认布局") { resetLayout() })
 
@@ -51,8 +53,11 @@ class MainActivity : AppCompatActivity() {
                 "1. 「手柄输入测试」里确认按键能被识别，记下每个键显示的 keyCode；\n" +
                 "2. 「③ 显示键位并编辑」→ 拖动圆点到游戏按钮位置；\n" +
                 "   · 单击某个圆点 → 再按手柄上的键，可以重新绑定这个圆点；\n" +
-                "   · 圆点显示的名字不对，就用这个办法重新绑一次；\n" +
+                "   · 长按某个圆点 0.5 秒 → 切换「单击 / 连发」，连发的圆点边框是橙色；\n" +
+                "     点桌面图标、点技能按钮用「单击」；要按住不放（开火/蓄力）用「连发」；\n" +
                 "3. 「④ 锁定并开始映射」，切到游戏即可。\n\n" +
+                "如果按了手柄有高亮、但屏幕上什么都没发生，「测试点击」能直接告诉你\n" +
+                "注入通不通：提示成功就说明服务正常，问题只在坐标或模式上。\n\n" +
                 "任何时候点屏幕右上角的红色小方块，都会立刻停止映射并清掉浮窗。\n\n" +
                 "注意：本方案用无障碍手势注入，对「需要持续按住摇杆移动」的场景支持有限。"
         ))
@@ -149,6 +154,24 @@ class MainActivity : AppCompatActivity() {
 
     private fun startTest() {
         startActivity(Intent(this, PadTestActivity::class.java))
+    }
+
+    /**
+     * 在屏幕中心注入一次点击。这是排查「按键有反应但屏幕不动」最快的手段：
+     * 成功 → 注入链路没问题，问题只在坐标/模式上；
+     * 失败 → 服务缺手势权限（canPerformGestures）或被别的无障碍占用。
+     */
+    private fun testTap() {
+        val svc = MapperService.instance
+        if (svc == null) {
+            Toast.makeText(this, "无障碍服务还没启动，请先点第 ② 步", Toast.LENGTH_LONG).show()
+            return
+        }
+        svc.testTap { ok, msg ->
+            runOnUiThread {
+                Toast.makeText(this, if (ok) "✓ $msg" else "✗ $msg", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     // ---------- UI 小工具 ----------

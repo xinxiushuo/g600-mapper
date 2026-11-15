@@ -4,7 +4,9 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Point
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
@@ -31,6 +33,8 @@ class OverlayManager(private val svc: AccessibilityService) {
 
     /** 编辑模式下单击某个圆点（未拖动） */
     var onChipTap: ((MappingPoint) -> Unit)? = null
+    /** 编辑模式下长按某个圆点：切换「单击 / 连发」 */
+    var onChipLongPress: ((MappingPoint) -> Unit)? = null
     /** 点击右上角的停止球 */
     var onStop: (() -> Unit)? = null
     /** 拖动结束，位置需要落盘 */
@@ -41,9 +45,13 @@ class OverlayManager(private val svc: AccessibilityService) {
 
     private var downRawX = 0f
     private var downRawY = 0f
+    private var downAt = 0L
     private var origX = 0
     private var origY = 0
     private var moved = false
+
+    /** 真实全屏尺寸。用 displayMetrics 会漏掉系统栏，导致点击位置整体偏上 */
+    private var screenPx = Point(0, 0)
 
     private class Chip(
         val point: MappingPoint,
@@ -54,15 +62,57 @@ class OverlayManager(private val svc: AccessibilityService) {
     private fun dp(v: Float): Int =
         (v * svc.resources.displayMetrics.density).roundToInt()
 
-    private fun screenW(): Int = svc.resources.displayMetrics.widthPixels
-    private fun screenH(): Int = svc.resources.displayMetrics.heightPixels
+    /**
+     * 取真实全屏尺寸（含状态栏/导航栏区域）。
+     * TYPE_ACCESSIBILITY_OVERLAY 配 FLAG_LAYOUT_IN_SCREEN 时，窗口坐标原点就是屏幕左上角，
+     * 所以这里必须用「真实尺寸」而不是 displayMetrics —— 后者不含系统栏，
+     * 会让映射点整体上移几十像素，点桌面图标时就点空了。
+     */
+    @Suppress("DEPRECATION")
+    private fun refreshScreenSize() {
+        screenPx = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val b = wm.currentWindowMetrics.bounds
+            Point(b.width(), b.height())
+        } else {
+            val p = Point()
+            wm.defaultDisplay.getRealSize(p)
+            p
+        }
+        if (screenPx.x <= 0 || screenPx.y <= 0) {
+            // 极少数机型拿不到真实尺寸，退回 displayMetrics
+            screenPx = Point(
+                svc.resources.displayMetrics.widthPixels,
+                svc.resources.displayMetrics.heightPixels
+            )
+        }
+    }
+
+    private fun screenW(): Int {
+        if (screenPx.x <= 0) refreshScreenSize()
+        return screenPx.x
+    }
+
+    private fun screenH(): Int {
+        if (screenPx.y <= 0) refreshScreenSize()
+        return screenPx.y
+    }
+
+    fun screenCenter(): Pair<Float, Float> =
+        (screenW() / 2f) to (screenH() / 2f)
 
     private fun chipSize(): Int = dp(52f)
 
-    private fun chipBackground(): GradientDrawable = GradientDrawable().apply {
+    /** 空闲时的透明度：编辑要看得清，锁定后压暗一点免得挡住图标文字 */
+    private val idleAlpha: Float get() = if (editing) 0.75f else 0.35f
+
+    /** repeat=true 的圆点用橙边，一眼看出哪些是「按住连发」，哪些是「单击一次」 */
+    private fun chipBackground(repeat: Boolean = false): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
         setColor(Color.argb(110, 0, 0, 0))
-        setStroke(dp(1.5f), Color.argb(210, 120, 220, 255))
+        setStroke(
+            dp(if (repeat) 2.4f else 1.5f),
+            if (repeat) Color.argb(235, 255, 170, 40) else Color.argb(210, 120, 220, 255)
+        )
     }
 
     private fun baseParams(w: Int, h: Int, touchable: Boolean): WindowManager.LayoutParams {
@@ -84,6 +134,7 @@ class OverlayManager(private val svc: AccessibilityService) {
 
     fun show(list: MutableList<MappingPoint>, edit: Boolean) {
         hide()
+        refreshScreenSize()
         points = list
         editing = edit
         list.forEach { addChip(it) }
@@ -97,8 +148,8 @@ class OverlayManager(private val svc: AccessibilityService) {
             setTextColor(Color.WHITE)
             textSize = 12f
             gravity = Gravity.CENTER
-            background = chipBackground()
-            alpha = 0.75f
+            background = chipBackground(p.repeat)
+            alpha = idleAlpha
         }
         val lp = baseParams(size, size, editing)
         lp.x = (p.fx * screenW()).toInt() - size / 2
@@ -148,6 +199,7 @@ class OverlayManager(private val svc: AccessibilityService) {
             MotionEvent.ACTION_DOWN -> {
                 downRawX = e.rawX
                 downRawY = e.rawY
+                downAt = e.eventTime
                 origX = chip.params.x
                 origY = chip.params.y
                 moved = false
@@ -166,22 +218,34 @@ class OverlayManager(private val svc: AccessibilityService) {
                 }
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                chip.view.alpha = 0.75f
+                chip.view.alpha = idleAlpha
                 if (!editing) return true
-                if (moved) {
-                    syncPositions()
-                    onLayoutChanged?.invoke()
-                } else {
-                    onChipTap?.invoke(chip.point)
+                when {
+                    moved -> {
+                        syncPositions()
+                        onLayoutChanged?.invoke()
+                    }
+                    // 长按 0.5 秒 = 切换「单击 / 连发」，圆点边框变橙色
+                    e.eventTime - downAt >= 500L -> {
+                        onChipLongPress?.invoke(chip.point)
+                        refreshChipStyle(chip)
+                    }
+                    else -> onChipTap?.invoke(chip.point)
                 }
             }
         }
         return true
     }
 
+    private fun refreshChipStyle(c: Chip) {
+        c.view.background = chipBackground(c.point.repeat)
+        c.view.text = c.point.label.ifBlank { "?" }
+    }
+
     fun setEditing(edit: Boolean) {
         editing = edit
         chips.forEach { c ->
+            c.view.alpha = idleAlpha
             c.params.flags = if (edit) {
                 c.params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             } else {
@@ -227,7 +291,7 @@ class OverlayManager(private val svc: AccessibilityService) {
     /** 学习状态下把某个点显示成"按键…" */
     fun showAwaiting(p: MappingPoint?) {
         chips.forEach { c ->
-            c.view.background = chipBackground()
+            c.view.background = chipBackground(c.point.repeat)
             if (p != null && c.point === p) {
                 c.view.text = "按键…"
                 c.view.background = GradientDrawable().apply {
@@ -243,12 +307,12 @@ class OverlayManager(private val svc: AccessibilityService) {
 
     fun highlight(keyCode: Int, down: Boolean) {
         val c = chips.firstOrNull { it.point.keyCode == keyCode && keyCode != 0 } ?: return
-        c.view.alpha = if (down) 1f else 0.75f
+        c.view.alpha = if (down) 1f else idleAlpha
         c.view.background = if (down) GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(Color.argb(210, 40, 160, 255))
             setStroke(dp(2f), Color.WHITE)
-        } else chipBackground()
+        } else chipBackground(c.point.repeat)
     }
 
     fun hide() {

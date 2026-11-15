@@ -6,4 +6,5 @@
     android:canRequestFilterKeyEvents="true"
     android:canRetrieveWindowContent="false"
     android:description="@string/acc_desc"
-    android:notificationTimeout="50" />
+    android:notificationTimeout="50"
+    android:canPerformGestures="true" />
