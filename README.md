@@ -156,6 +156,7 @@ python tools/g600.py scan      # 蓝牙/2.4G 到底被认成什么、走不走 X
 - **直接下载 APK（免登录）**：<https://github.com/xinxiushuo/g600-mapper/releases/latest/download/app-debug.apk>
 - 仓库：<https://github.com/xinxiushuo/g600-mapper>（本地另存一份 `dist/app-debug.apk`）
 - 构建方式：push 到 `main` → GitHub Actions 自动打包 → 覆盖更新到上面的 `latest` 直链
+- **装的是哪一版**：APP 主界面和「手柄输入测试」页的**最底部**都有一行版本信息，形如 `v1.1 (2) · 构建 2026-11-15 11:26`；构建时间是 CI 真实的编译时间（北京时间），长按这一行可复制版本+机型，反馈问题时直接粘出来即可
 - 说明与能力边界：见 [`android/README.md`](android/README.md)
 
 > 非 root 的限制：按钮映射可用，摇杆的连续拖动效果有限 —— 原因和替代方案写在 `android/README.md` 里。

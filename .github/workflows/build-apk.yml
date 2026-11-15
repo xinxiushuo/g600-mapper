@@ -3,6 +3,12 @@ name: Build APK
 on:
   push:
     branches: [ main, master ]
+    # 只改文档时不必重新打包（否则每次改 README 都会生成一个时间戳不同的新包，
+    # 让人分不清本地那份是不是最新）
+    paths:
+      - 'android/**'
+      - 'keystore/**'
+      - '.github/workflows/build-apk.yml'
   workflow_dispatch:
 
 permissions:
