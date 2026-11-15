@@ -4,19 +4,24 @@
 
 ## 怎么拿到 APK
 
-### 方式 A：GitHub 自动构建（不用装开发工具）
+### 方式 A：直接下载（推荐，免登录）
 
-1. 注册/登录 [github.com](https://github.com)，点右上角 **+** → **New repository**
-2. 仓库名随便填（如 `g600-mapper`），选 **Private** 或 Public 都行，点 **Create repository**
-3. 在新仓库页面点 **uploading an existing file**
-4. 把这个 `android` 文件夹和 `.github` 文件夹一起拖进去（注意：`.github` 是隐藏目录，Windows 资源管理器要先开启「显示隐藏项目」）
-5. 点 **Commit changes**
-6. 打开仓库顶部的 **Actions** 标签 → 等 3～5 分钟 → 点最新一次运行 → 页面底部 **Artifacts** 下载 `G600Mapper-debug-apk`
-7. 解压得到 `app-debug.apk`，传到手机安装（需要允许「安装未知来源应用」）
+```
+https://github.com/xinxiushuo/g600-mapper/releases/latest/download/app-debug.apk
+```
 
-> 每次改代码 push 上去都会自动重新打包。
+手机浏览器直接打开这个链接就能下，不用登录 GitHub。
+下载后允许「安装未知来源应用」即可安装。
 
-### 方式 B：Android Studio（想改代码就走这个）
+> 仓库：https://github.com/xinxiushuo/g600-mapper
+> 每次 push 到 `main` 都会自动重新打包，并覆盖更新到上面这个 `latest` 直链。
+
+### 方式 B：GitHub Actions 里手动下载
+
+仓库顶部 **Actions** 标签 → 点最新一次 `Build APK` → 页面底部 **Artifacts** → 下载 `G600Mapper-debug-apk`（zip，解开是 `app-debug.apk`）。
+注意：Artifacts 必须**登录 GitHub** 才能下载，所以推荐用方式 A。
+
+### 方式 C：Android Studio（想改代码就走这个）
 
 1. 装 [Android Studio](https://developer.android.com/studio)（约 3 GB，含 SDK）
 2. `File → Open` 选择这个 `android` 目录
@@ -77,10 +82,12 @@ app/src/main/java/com/g600/mapper/
 
 配置文件存在 `SharedPreferences`，坐标用 0～1 归一化保存，所以横竖屏、换手机都能还原。
 
+## 构建状态
+
+已在 GitHub Actions 上通过（JDK 17 + Gradle 8.5 + AGP 8.2.2，`assembleDebug` 成功），产物 5.3 MB，`AndroidManifest.xml`、`classes.dex`、无障碍服务与权限声明均已校验存在。
+
 ## 注意
 
-这份代码**没有在本机编译验证过**（我这台机器没有 JDK 和 Android SDK）。如果 GitHub Actions 构建报错，把报错贴给我，我改。已知可能出问题的地方：
-
-- `serviceInfo.motionEventSources` 需要 Android 12+，已用 `Build.VERSION` 保护
-- 无障碍服务声明里的 `android:motionEventSources` 属性同样只在 API 31+ 生效
-- 各家 ROM（小米/华为/OPPO）对无障碍服务和悬浮窗可能有额外限制，需要在系统设置里单独授权「后台弹出界面」「显示悬浮窗」
+- 这是 **debug 签名**的包，可以正常安装，但不能上应用商店
+- 各家 ROM（小米/华为/OPPO/vivo）对无障碍服务有额外限制，通常还需要在系统设置里单独允许「后台弹出界面」「自启动」「显示悬浮窗」，否则息屏或切后台后服务会被杀
+- 第一版**不做摇杆映射**，只做按键 → 触摸点。原因见上文「能力边界」

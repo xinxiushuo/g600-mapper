@@ -153,7 +153,9 @@ python tools/g600.py scan      # 蓝牙/2.4G 到底被认成什么、走不走 X
 
 在 `android/` 目录，Kotlin 写的无障碍服务方案：悬浮键位可拖动、触摸穿透、按键映射到屏幕任意坐标。
 
-- 构建方式：GitHub Actions 自动出 APK（不用装开发工具）或 Android Studio 直接 Run
+- **直接下载 APK（免登录）**：<https://github.com/xinxiushuo/g600-mapper/releases/latest/download/app-debug.apk>
+- 仓库：<https://github.com/xinxiushuo/g600-mapper>（本地另存一份 `dist/app-debug.apk`）
+- 构建方式：push 到 `main` → GitHub Actions 自动打包 → 覆盖更新到上面的 `latest` 直链
 - 说明与能力边界：见 [`android/README.md`](android/README.md)
 
 > 非 root 的限制：按钮映射可用，摇杆的连续拖动效果有限 —— 原因和替代方案写在 `android/README.md` 里。
@@ -166,5 +168,6 @@ tools/g600.py                      手柄诊断 / 采集 / 校准主工具
 tools/hid_probe.py                 HID 设备枚举与原始监控（ctypes 零依赖）
 tools/run.bat                      菜单式启动器
 android/                           手机映射 APP 源码
+dist/app-debug.apk                 已构建好的 APK(本地备份, 不入库)
 .github/workflows/build-apk.yml    自动打包 APK
 ```
