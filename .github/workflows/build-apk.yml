@@ -26,6 +26,16 @@ jobs:
         with:
           gradle-version: '8.5'
 
+      # 把页面底部显示的构建时间换成真实编译时间(北京时间),
+      # 这样每个包都能凭底部那行字区分, 不用靠 versionCode 猜
+      - name: Stamp build time
+        run: |
+          STAMP=$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')
+          F=android/app/src/main/java/com/g600/mapper/AppInfo.kt
+          sed -i "s|const val BUILD_STAMP = \"[^\"]*\"|const val BUILD_STAMP = \"$STAMP\"|" "$F"
+          grep 'BUILD_STAMP =' "$F"
+        shell: bash
+
       - name: Build debug APK
         working-directory: android
         run: gradle assembleDebug --no-daemon --stacktrace

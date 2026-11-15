@@ -56,6 +56,9 @@ class MainActivity : AppCompatActivity() {
                 "任何时候点屏幕右上角的红色小方块，都会立刻停止映射并清掉浮窗。\n\n" +
                 "注意：本方案用无障碍手势注入，对「需要持续按住摇杆移动」的场景支持有限。"
         ))
+
+        // 页面底部版本号（长按可复制），方便确认装的是哪一版
+        VersionFooter.attach(root, this)
     }
 
     override fun onResume() {

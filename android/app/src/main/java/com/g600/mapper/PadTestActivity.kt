@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -79,7 +80,14 @@ class PadTestActivity : AppCompatActivity() {
             setTextColor(Color.parseColor("#EEEEEE"))
             typeface = Typeface.MONOSPACE
         }
-        root.addView(ScrollView(this).apply { addView(logView) })
+        root.addView(
+            ScrollView(this).apply { addView(logView) },
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+            )
+        )
+        // 底部版本号：测试页也需要，方便确认「是不是装了新包」
+        VersionFooter.attach(root, this, Color.parseColor("#777777"))
 
         setContentView(root)
         renderAxes(null)
