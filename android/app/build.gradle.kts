@@ -15,7 +15,23 @@ android {
         versionName = "1.1"
     }
 
+    // 固定签名: CI 每次构建自动生成的 debug keystore 都不同, 会导致
+    // "签名不一致, 覆盖安装失败"。这里用仓库里固定的 p12, 保证以后每个版本
+    // 都能直接覆盖升级, 不需要先卸载。
+    signingConfigs {
+        create("stable") {
+            storeFile = file("../../keystore/g600.p12")
+            storePassword = "g600mapper"
+            keyAlias = "g600key"
+            keyPassword = "g600mapper"
+            storeType = "PKCS12"
+        }
+    }
+
     buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("stable")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
