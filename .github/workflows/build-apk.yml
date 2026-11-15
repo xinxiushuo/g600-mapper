@@ -5,6 +5,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write        # 发布 Release 需要写权限
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,9 +30,25 @@ jobs:
         working-directory: android
         run: gradle assembleDebug --no-daemon --stacktrace
 
-      - name: Upload APK
+      - name: Upload APK (artifact)
         uses: actions/upload-artifact@v4
         with:
           name: G600Mapper-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
+
+      # 发到 Releases: 这样不登录 GitHub 也能直接下载 APK
+      - name: Publish to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: G600 Mapper 最新构建
+          body: |
+            自动构建的 debug 版 APK，无需登录即可下载。
+
+            直链：https://github.com/xinxiushuo/g600-mapper/releases/latest/download/app-debug.apk
+
+            构建来源：${{ github.sha }}
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+          overwrite_files: true
+          make_latest: true
