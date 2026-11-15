@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">G600 手柄映射</string>
+    <string name="service_label">G600 按键映射服务</string>
+    <string name="test_title">手柄输入测试</string>
+    <string name="acc_desc">读取手柄按键并在屏幕上注入触摸，用于把实体手柄映射成屏幕操作。不会读取任何屏幕内容。</string>
+</resources>
