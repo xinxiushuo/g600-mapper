@@ -11,16 +11,14 @@ import android.view.accessibility.AccessibilityEvent
 
 /**
  * 核心服务：
- *  1. onKeyEvent  ---- 全局接收手柄按键（即使本 APP 不在前台）
- *  2. dispatchGesture - 在映射点注入触摸
+ *  1. onKeyEvent       —— 全局接收手柄按键（即使本 APP 不在前台）
+ *  2. dispatchGesture  —— 在映射点注入触摸
  *
- * 注入策略说明：
- *  dispatchGesture 在同一时刻只允许一个手势在执行，新手势会取消旧手势。
- *  所以这里用「周期性重发」的方式模拟"按住"：每 40ms 把当前所有按下的映射点
- *  合并成一个多指手势发出去。代价是游戏侧感知为高频点击而非严格的长按，
- *  但在非 root 环境下这是唯一既不误触又能多指并发的做法。
+ * 只拦截**已经绑定到某个圆点**的按键，其余一律放行给系统。
+ * 这样即使系统把某个键翻译成了 KEYCODE_BACK 之类的系统键，只要用户没绑定它，
+ * 就不会被吞掉（旧版按"手柄键表"整片拦截，把手机返回键一起吞了）。
  */
-class MapperService : AccessibilityService(), OverlayManager.OnLayoutChanged {
+class MapperService : AccessibilityService() {
 
     companion object {
         @Volatile
@@ -33,49 +31,71 @@ class MapperService : AccessibilityService(), OverlayManager.OnLayoutChanged {
     private val pressed = mutableSetOf<Int>()
     private var ticking = false
 
-    /** 总开关：关掉后按键直接放行给系统。默认关，避免服务一开就吞掉手柄按键 */
+    /** 总开关：关掉后按键全部放行。默认关，服务开启本身不干扰使用 */
+    @Volatile
     var mappingEnabled = false
+
+    /** 正在等待用户按下一个手柄键的那个圆点（学习绑定） */
+    private var pending: MappingPoint? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         overlay = OverlayManager(this)
-
-        // TYPE_ACCESSIBILITY_OVERLAY 是无障碍服务的特权窗口类型, 正常不需要用户单独授权;
-        // 少数定制 ROM 会拦, show() 内部已 try/catch, 失败不会崩
-        overlay.show(MappingStore.load(this), false)
+        overlay.onChipTap = { p -> startLearn(p) }
+        overlay.onStop = { stopAll() }
+        overlay.onLayoutChanged = { MappingStore.save(this, overlay.currentPoints()) }
+        // 注意：这里**不自动显示浮窗**。旧版一连上就铺满屏幕，
+        // 用户还没反应过来就已经挡屏了。
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
 
     override fun onInterrupt() = Unit
 
-    /** 判断按键是否真的来自手柄设备（而不是手机自身按键/软键盘） */
+    /** 判断按键是否真的来自手柄（而不是手机自身按键/软键盘） */
     private fun isFromPad(event: KeyEvent): Boolean {
         val dev = event.device ?: return false
         val src = dev.sources
         return (src and InputDevice.SOURCE_JOYSTICK) != 0 ||
-                (src and InputDevice.SOURCE_GAMEPAD) != 0
+                (src and InputDevice.SOURCE_GAMEPAD) != 0 ||
+                (src and InputDevice.SOURCE_DPAD) != 0
     }
 
     override fun onKeyEvent(event: KeyEvent): Boolean {
-        if (!mappingEnabled) return false
         val code = event.keyCode
-        if (!PadKeys.isGamepadKey(code)) return false
 
-        // KEYCODE_BACK 和手机自己的返回键撞码, 必须按来源区分:
-        // 手柄发来的才拦, 否则用户会把任何界面的返回键都按不出去
+        // ---- 学习绑定：编辑模式下点了某个圆点，接下来按的那个键就绑给它 ----
+        val wait = pending
+        if (wait != null && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+            if (isFromPad(event) || code >= KeyEvent.KEYCODE_BUTTON_1) {
+                wait.keyCode = code
+                wait.label = PadKeys.describe(code)
+                pending = null
+                overlay.showAwaiting(null)
+                overlay.refreshLabel(wait)
+                MappingStore.save(this, overlay.currentPoints())
+                return true
+            }
+            return false
+        }
+
+        if (!mappingEnabled) return false
+
+        // 只有被绑定过的键才拦
+        val point = overlay.findPoint(code) ?: return false
+        // 兜底：BACK 与手机返回键撞码，不是手柄来的就放行
         if (code == KeyEvent.KEYCODE_BACK && !isFromPad(event)) return false
 
         when (event.action) {
             KeyEvent.ACTION_DOWN -> {
                 if (pressed.add(code)) {
-                    overlay.highlight(code, true)
+                    overlay.highlight(point.keyCode, true)
                     ensureTicking()
                 }
             }
             KeyEvent.ACTION_UP -> {
-                if (pressed.remove(code)) overlay.highlight(code, false)
+                if (pressed.remove(code)) overlay.highlight(point.keyCode, false)
             }
         }
         return true   // 吞掉，避免游戏和映射同时响应
@@ -120,24 +140,37 @@ class MapperService : AccessibilityService(), OverlayManager.OnLayoutChanged {
 
     // ---------------- 供界面调用 ----------------
 
-    /** 切换编辑/锁定。show() 内部会重建悬浮层，flags 随之更新 */
-    fun setEditing(edit: Boolean) {
+    private fun startLearn(p: MappingPoint) {
+        if (!overlay.isEditing) return
+        pending = p
+        overlay.showAwaiting(p)
+    }
+
+    fun showOverlay(edit: Boolean) {
+        handler.post {
+            pending = null
+            pressed.clear()
+            overlay.show(MappingStore.load(this), edit)
+        }
+    }
+
+    fun hideOverlay() {
+        pending = null
         pressed.clear()
-        overlay.show(MappingStore.load(this), edit)
+        mappingEnabled = false
+        overlay.hide()
     }
 
-    fun reloadOverlay() {
-        pressed.clear()
-        overlay.show(MappingStore.load(this), overlay.isEditing)
+    /** 一键停止：关映射 + 收浮窗，任何时候都该能回到"干净手机"状态 */
+    fun stopAll() {
+        hideOverlay()
     }
 
-    fun isOverlayShowing(): Boolean = overlay.isShowing
+    fun isOverlayShowing(): Boolean = ::overlay.isInitialized && overlay.isShowing
 
-    fun isEditing(): Boolean = overlay.isEditing
+    fun isEditing(): Boolean = ::overlay.isInitialized && overlay.isEditing
 
-    override fun onLayoutChanged() {
-        MappingStore.save(this, overlay.currentPoints())
-    }
+    fun pointCount(): Int = if (::overlay.isInitialized) MappingStore.load(this).size else 0
 
     override fun onDestroy() {
         instance = null

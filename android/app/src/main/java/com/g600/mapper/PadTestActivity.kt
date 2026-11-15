@@ -2,6 +2,7 @@ package com.g600.mapper
 
 import android.annotation.SuppressLint
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
 import android.view.InputDevice
 import android.view.KeyEvent
@@ -20,9 +21,10 @@ import java.util.ArrayDeque
 class PadTestActivity : AppCompatActivity() {
 
     private lateinit var axesView: TextView
+    private lateinit var deviceView: TextView
     private lateinit var logView: TextView
     private val lines = ArrayDeque<String>()
-    private var prevMapping = true
+    private var prevMapping = false
 
     private val axisIds = intArrayOf(
         MotionEvent.AXIS_X, MotionEvent.AXIS_Y,
@@ -49,29 +51,39 @@ class PadTestActivity : AppCompatActivity() {
             setTextColor(Color.WHITE)
         })
         root.addView(TextView(this).apply {
-            text = "按手柄上的键，下面应该出现对应的 KeyCode。\n如果什么都没出现，说明 Android 没把它识别成手柄。"
+            text = "按手柄上的键，下面会显示 keyCode 和它来自哪个设备。\n" +
+                    "记下每个键的数字，映射不对时用「③ 显示键位」里单击圆点重新绑定。"
             textSize = 12f
             setTextColor(Color.parseColor("#999999"))
-            setPadding(0, dp(8f), 0, dp(12f))
+            setPadding(0, dp(8f), 0, dp(10f))
         })
+
+        deviceView = TextView(this).apply {
+            textSize = 11f
+            setTextColor(Color.parseColor("#AAAAAA"))
+            typeface = Typeface.MONOSPACE
+            setPadding(0, 0, 0, dp(8f))
+        }
+        root.addView(deviceView)
 
         axesView = TextView(this).apply {
             textSize = 12f
             setTextColor(Color.parseColor("#66D9EF"))
-            typeface = android.graphics.Typeface.MONOSPACE
-            setPadding(0, 0, 0, dp(12f))
+            typeface = Typeface.MONOSPACE
+            setPadding(0, 0, 0, dp(10f))
         }
         root.addView(axesView)
 
         logView = TextView(this).apply {
             textSize = 13f
             setTextColor(Color.parseColor("#EEEEEE"))
-            typeface = android.graphics.Typeface.MONOSPACE
+            typeface = Typeface.MONOSPACE
         }
         root.addView(ScrollView(this).apply { addView(logView) })
 
         setContentView(root)
         renderAxes(null)
+        renderDevices()
     }
 
     override fun onResume() {
@@ -80,6 +92,7 @@ class PadTestActivity : AppCompatActivity() {
             prevMapping = it.mappingEnabled
             it.mappingEnabled = false
         }
+        renderDevices()
     }
 
     override fun onPause() {
@@ -87,24 +100,49 @@ class PadTestActivity : AppCompatActivity() {
         MapperService.instance?.mappingEnabled = prevMapping
     }
 
+    /** 列出系统里所有手柄类设备，确认它到底有没有被识别成 Gamepad/Joystick */
+    private fun renderDevices() {
+        val sb = StringBuilder()
+        val ids = InputDevice.getDeviceIds()
+        var found = false
+        for (id in ids) {
+            val d = InputDevice.getDevice(id) ?: continue
+            val src = d.sources
+            val isPad = (src and InputDevice.SOURCE_GAMEPAD) != 0 ||
+                    (src and InputDevice.SOURCE_JOYSTICK) != 0
+            if (!isPad) continue
+            found = true
+            sb.append("设备: ").append(d.name).append("\n")
+            sb.append("  id=").append(d.id).append("  sources=0x").append(Integer.toHexString(src)).append("\n")
+            sb.append("  vid:pid=").append(d.vendorId).append(":").append(d.productId).append("\n")
+        }
+        deviceView.text = if (found) sb.toString().trimEnd()
+        else "没有检测到手柄设备 —— 请先用蓝牙/2.4G 连上"
+    }
+
+    private fun isPadEvent(event: KeyEvent): Boolean {
+        val src = event.device?.sources ?: 0
+        if (src and InputDevice.SOURCE_GAMEPAD != 0) return true
+        if (src and InputDevice.SOURCE_JOYSTICK != 0) return true
+        val c = event.keyCode
+        return c >= KeyEvent.KEYCODE_BUTTON_A
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        if (isPadKey(keyCode)) {
-            add("按下  ${PadKeys.label(keyCode)}   keyCode=$keyCode")
+        if (isPadEvent(event)) {
+            add("DOWN  keyCode=$keyCode  ${PadKeys.describe(keyCode)}  dev=${event.device?.name}")
             return true
         }
         return super.onKeyDown(keyCode, event)
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
-        if (isPadKey(keyCode)) {
-            add("松开  ${PadKeys.label(keyCode)}")
+        if (isPadEvent(event)) {
+            add("UP    keyCode=$keyCode  ${PadKeys.describe(keyCode)}")
             return true
         }
         return super.onKeyUp(keyCode, event)
     }
-
-    private fun isPadKey(code: Int): Boolean =
-        PadKeys.isGamepadKey(code) || code >= KeyEvent.KEYCODE_BUTTON_A
 
     @SuppressLint("SetTextI18n")
     override fun onGenericMotionEvent(event: MotionEvent): Boolean {
@@ -134,7 +172,6 @@ class PadTestActivity : AppCompatActivity() {
     }
 
     private fun add(line: String) {
-        val ts = String.format("%02d:%02d ", 0, 0)
         lines.addLast(line)
         while (lines.size > 40) lines.removeFirst()
         logView.text = lines.joinToString("\n")

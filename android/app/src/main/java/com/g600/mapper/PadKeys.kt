@@ -35,6 +35,17 @@ object PadKeys {
 
     fun label(code: Int): String = NAMES[code] ?: "KEY_$code"
 
+    /** 给用户看的短名字：标准键用名字，未知键显示 B1..B16 / K<code> */
+    fun describe(code: Int): String {
+        NAMES[code]?.let { return it }
+        return when {
+            code >= KeyEvent.KEYCODE_BUTTON_1 && code <= KeyEvent.KEYCODE_BUTTON_16 ->
+                "B" + (code - KeyEvent.KEYCODE_BUTTON_1 + 1)
+            code == 0 -> "?"
+            else -> "K$code"
+        }
+    }
+
     fun isGamepadKey(code: Int): Boolean = NAMES.containsKey(code)
 
     /** 默认布局：给每个键一个初始位置（按屏幕比例） */
